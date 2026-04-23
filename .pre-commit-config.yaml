@@ -1,0 +1,30 @@
+repos:
+  - repo: local
+    hooks:
+      - id: ruff
+        name: ruff lint
+        entry: ruff check --fix
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: ruff-format
+        name: ruff format
+        entry: ruff format
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: black
+        name: black
+        entry: black
+        language: system
+        types: [python]
+        files: ^backend/
+
+      - id: isort
+        name: isort
+        entry: isort
+        language: system
+        types: [python]
+        files: ^backend/
