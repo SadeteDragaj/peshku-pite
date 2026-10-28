@@ -4,16 +4,16 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.ws import manager as ws_manager
 from app.api.inventory import consume_for_order
+from app.api.ws import manager as ws_manager
 from app.core.deps import RoleChecker, get_current_user, get_db
 from app.core.security import Role
-from app.models.menu import MenuItem
-from app.models.order import Order, OrderItem, OrderStatus
+from app.models.order import Order, OrderStatus
 from app.models.table import Table
 from app.models.user import User
 from app.schemas.menu import PaginatedResponse
 from app.schemas.order import OrderCreate, OrderRead, OrderStatusUpdate
+from app.services.ordering import build_order_item, order_payload
 
 router = APIRouter()
 
@@ -48,28 +48,11 @@ async def place_order(
     if not table:
         raise HTTPException(status_code=404, detail="Table not found")
 
-    order = Order(table_id=body.table_id, notes=body.notes)
-
+    order = Order(
+        table_id=body.table_id, session_id=table.session_id, waiter_id=table.assigned_waiter_id, notes=body.notes
+    )
     for line in body.items:
-        menu_item = await db.get(MenuItem, line.menu_item_id)
-        if not menu_item:
-            raise HTTPException(
-                status_code=404, detail=f"Menu item {line.menu_item_id} not found"
-            )
-        if not menu_item.available:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Menu item '{menu_item.name}' is not available",
-            )
-        order.items.append(
-            OrderItem(
-                menu_item_id=line.menu_item_id,
-                quantity=line.quantity,
-                unit_price=menu_item.price,
-                subtotal=menu_item.price * line.quantity,
-                special_instructions=line.special_instructions,
-            )
-        )
+        order.items.append(await build_order_item(line, db))
 
     db.add(order)
     await db.flush()  # get order.id for inventory refs
@@ -83,7 +66,14 @@ async def place_order(
 
     # Broadcast new-order event via WebSocket
     await ws_manager.broadcast(
-        {"event": "order_created", "order_id": order.id, "table_id": order.table_id, "status": order.status}
+        {
+            "event": "order_created",
+            "order_id": order.id,
+            "table_id": order.table_id,
+            "table_number": table.number,
+            "status": order.status,
+            "order": order_payload(order),
+        }
     )
     return order
 
@@ -181,7 +171,7 @@ async def update_order_status(
             "table_id": order.table_id,
             "old_status": old_status,
             "new_status": order.status,
+            "order": order_payload(order),
         }
     )
     return order
-    return {"id": order.id, "status": order.status}

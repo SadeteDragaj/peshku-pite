@@ -34,8 +34,8 @@ export default function SplitBillModal({ order, onConfirm, onCancel }: Props) {
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-      <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md">
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-3">
+      <div className="bg-white rounded-xl shadow-xl p-4 sm:p-6 w-full max-w-md max-h-[calc(100dvh-24px)] overflow-y-auto">
         <h3 className="text-lg font-bold mb-4">
           Split Bill – Order #{order.id.slice(0, 8)}
         </h3>
@@ -45,7 +45,7 @@ export default function SplitBillModal({ order, onConfirm, onCancel }: Props) {
           {/* Group A */}
           <div>
             <h4 className="text-sm font-semibold text-blue-700 mb-1">
-              Bill A – ${totalA.toFixed(2)}
+              Bill A – €{totalA.toFixed(2)}
             </h4>
             {groupA.map((item) => (
               <button
@@ -53,8 +53,8 @@ export default function SplitBillModal({ order, onConfirm, onCancel }: Props) {
                 onClick={() => toggle(item.id)}
                 className="block w-full text-left text-sm p-1.5 rounded hover:bg-blue-50 border mb-1"
               >
-                {item.quantity}× {item.menu_item_id}
-                <span className="float-right text-gray-400">${item.subtotal.toFixed(2)}</span>
+                {item.quantity}× {item.name || item.menu_item_id}
+                <span className="float-right text-gray-400">€{item.subtotal.toFixed(2)}</span>
               </button>
             ))}
           </div>
@@ -62,7 +62,7 @@ export default function SplitBillModal({ order, onConfirm, onCancel }: Props) {
           {/* Group B */}
           <div>
             <h4 className="text-sm font-semibold text-purple-700 mb-1">
-              Bill B – ${totalB.toFixed(2)}
+              Bill B – €{totalB.toFixed(2)}
             </h4>
             {groupB.map((item) => (
               <button
@@ -70,8 +70,8 @@ export default function SplitBillModal({ order, onConfirm, onCancel }: Props) {
                 onClick={() => toggle(item.id)}
                 className="block w-full text-left text-sm p-1.5 rounded hover:bg-purple-50 border mb-1"
               >
-                {item.quantity}× {item.menu_item_id}
-                <span className="float-right text-gray-400">${item.subtotal.toFixed(2)}</span>
+                {item.quantity}× {item.name || item.menu_item_id}
+                <span className="float-right text-gray-400">€{item.subtotal.toFixed(2)}</span>
               </button>
             ))}
             {groupB.length === 0 && (

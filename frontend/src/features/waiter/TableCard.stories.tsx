@@ -3,7 +3,7 @@ import TableCard from "./TableCard";
 import type { TableOverview } from "./types";
 
 const occupied: TableOverview = {
-  id: "t1", number: 3, seats: 4, occupied: true, assigned_waiter_id: "w1",
+  id: "t1", number: 3, seats: 4, occupied: true, assigned_waiter_id: "w1", assigned_waiter_name: "Ana",
   total_pending: 42.50,
   active_orders: [
     {
@@ -21,7 +21,7 @@ const occupied: TableOverview = {
 };
 
 const free: TableOverview = {
-  id: "t2", number: 7, seats: 2, occupied: false, assigned_waiter_id: null,
+  id: "t2", number: 7, seats: 2, occupied: false, assigned_waiter_id: null, assigned_waiter_name: "",
   total_pending: 0, active_orders: [],
 };
 

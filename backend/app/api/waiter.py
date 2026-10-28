@@ -1,6 +1,8 @@
 """Waiter-dashboard endpoints: table overview, transfer, split-bill, close order."""
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from datetime import datetime, timezone
+
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,8 +10,11 @@ from app.api.ws import manager as ws_manager
 from app.core.deps import RoleChecker, get_current_user, get_db
 from app.core.security import Role
 from app.models.order import Order, OrderItem, OrderStatus
-from app.models.table import Table
+from app.models.service import RequestStatus, ServiceRequest
+from app.models.table import Table, new_session_id
 from app.models.user import User
+from app.schemas.guest import ServiceRequestRead
+from app.schemas.order import OrderRead
 from app.schemas.waiter import (
     CloseOrderRequest,
     CloseOrderResponse,
@@ -17,12 +22,37 @@ from app.schemas.waiter import (
     SplitBillResponse,
     TableOverview,
     TransferTableRequest,
+    WaiterBrief,
 )
-from app.schemas.order import OrderRead
 
 router = APIRouter()
 
 _waiter_staff = [Depends(RoleChecker([Role.WAITER, Role.ADMIN]))]
+
+
+def staff_name(user: User) -> str:
+    return user.full_name or user.email.split("@")[0]
+
+
+async def _waiter_names(db: AsyncSession) -> dict[str, str]:
+    users = (await db.execute(select(User).where(User.role.in_([Role.WAITER, Role.ADMIN])))).scalars().all()
+    return {u.id: staff_name(u) for u in users}
+
+
+# ===================================================================
+# GET /waiter/staff – who a table can be handed to
+# ===================================================================
+@router.get(
+    "/staff",
+    response_model=list[WaiterBrief],
+    dependencies=_waiter_staff,
+    summary="Active waiters (for transferring a table)",
+)
+async def waiter_staff(db: AsyncSession = Depends(get_db)):
+    users = (
+        (await db.execute(select(User).where(User.role == Role.WAITER, User.active.is_(True)))).scalars().all()
+    )
+    return sorted((WaiterBrief(id=u.id, name=staff_name(u)) for u in users), key=lambda w: w.name.lower())
 
 
 # ===================================================================
@@ -45,22 +75,25 @@ async def table_overview(
     query = query.order_by(Table.number)
 
     tables = (await db.execute(query)).scalars().all()
+    names = await _waiter_names(db)
     result: list[TableOverview] = []
 
     for t in tables:
         # Fetch active (non-terminal) orders for this table
         active = (
-            await db.execute(
-                select(Order)
-                .where(Order.table_id == t.id)
-                .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
-                .order_by(Order.created_at)
+            (
+                await db.execute(
+                    select(Order)
+                    .where(Order.table_id == t.id)
+                    .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
+                    .order_by(Order.created_at)
+                )
             )
-        ).scalars().all()
-
-        total_pending = sum(
-            item.subtotal for o in active for item in o.items
+            .scalars()
+            .all()
         )
+
+        total_pending = sum(item.subtotal for o in active for item in o.items)
 
         result.append(
             TableOverview(
@@ -69,6 +102,7 @@ async def table_overview(
                 seats=t.seats,
                 occupied=t.occupied,
                 assigned_waiter_id=t.assigned_waiter_id,
+                assigned_waiter_name=names.get(t.assigned_waiter_id or "", ""),
                 active_orders=[OrderRead.model_validate(o) for o in active],
                 total_pending=round(total_pending, 2),
             )
@@ -97,28 +131,34 @@ async def transfer_table(
 
     # Validate target waiter exists and is a waiter/admin
     target = await db.get(User, body.target_waiter_id)
-    if not target or target.role not in (Role.WAITER, Role.ADMIN):
+    if not target or not target.active or target.role not in (Role.WAITER, Role.ADMIN):
         raise HTTPException(status_code=400, detail="Target user is not a waiter")
 
     table.assigned_waiter_id = body.target_waiter_id
     await db.commit()
     await db.refresh(table)
 
-    await ws_manager.broadcast({
-        "event": "table_transferred",
-        "table_id": table.id,
-        "table_number": table.number,
-        "new_waiter_id": body.target_waiter_id,
-    })
+    await ws_manager.broadcast(
+        {
+            "event": "table_transferred",
+            "table_id": table.id,
+            "table_number": table.number,
+            "new_waiter_id": body.target_waiter_id,
+        }
+    )
 
     # Return updated overview for this table
     active = (
-        await db.execute(
-            select(Order)
-            .where(Order.table_id == table.id)
-            .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
+        (
+            await db.execute(
+                select(Order)
+                .where(Order.table_id == table.id)
+                .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     return TableOverview(
         id=table.id,
@@ -126,6 +166,7 @@ async def transfer_table(
         seats=table.seats,
         occupied=table.occupied,
         assigned_waiter_id=table.assigned_waiter_id,
+        assigned_waiter_name=staff_name(target),
         active_orders=[OrderRead.model_validate(o) for o in active],
         total_pending=round(sum(i.subtotal for o in active for i in o.items), 2),
     )
@@ -168,12 +209,22 @@ async def split_bill(
     # Create new sub-orders
     new_orders: list[Order] = []
     for group in body.splits:
-        new_order = Order(table_id=order.table_id, notes=f"Split from #{order_id[:8]}", status=order.status)
+        new_order = Order(
+            table_id=order.table_id,
+            session_id=order.session_id,
+            waiter_id=order.waiter_id,
+            notes=f"Split from #{order_id[:8]}",
+            status=order.status,
+        )
         for item_id in group:
             orig = next(i for i in order.items if i.id == item_id)
             new_order.items.append(
                 OrderItem(
                     menu_item_id=orig.menu_item_id,
+                    name=orig.name,
+                    station=orig.station,
+                    size=orig.size,
+                    addons=orig.addons,
                     quantity=orig.quantity,
                     unit_price=orig.unit_price,
                     subtotal=orig.subtotal,
@@ -191,11 +242,13 @@ async def split_bill(
     for o in new_orders:
         await db.refresh(o)
 
-    await ws_manager.broadcast({
-        "event": "order_split",
-        "original_order_id": order_id,
-        "new_order_ids": [o.id for o in new_orders],
-    })
+    await ws_manager.broadcast(
+        {
+            "event": "order_split",
+            "original_order_id": order_id,
+            "new_order_ids": [o.id for o in new_orders],
+        }
+    )
 
     return SplitBillResponse(
         original_order_id=order_id,
@@ -235,12 +288,16 @@ async def close_order(
 
     # Check if table can be freed
     remaining = (
-        await db.execute(
-            select(Order)
-            .where(Order.table_id == order.table_id)
-            .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
+        (
+            await db.execute(
+                select(Order)
+                .where(Order.table_id == order.table_id)
+                .where(Order.status.notin_([OrderStatus.SERVED, OrderStatus.VOIDED]))
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     table_freed = False
     if len(remaining) == 0:
@@ -250,17 +307,114 @@ async def close_order(
             table_freed = True
             await db.commit()
 
-    await ws_manager.broadcast({
-        "event": "order_closed",
-        "order_id": order.id,
-        "table_id": order.table_id,
-        "old_status": old_status,
-        "new_status": new_status,
-        "table_freed": table_freed,
-    })
+    await ws_manager.broadcast(
+        {
+            "event": "order_closed",
+            "order_id": order.id,
+            "table_id": order.table_id,
+            "old_status": old_status,
+            "new_status": new_status,
+            "table_freed": table_freed,
+        }
+    )
 
     return CloseOrderResponse(
         order_id=order.id,
         new_status=new_status,
         table_freed=table_freed,
     )
+
+
+# ===================================================================
+# Guest service requests (call waiter / water / bill)
+# ===================================================================
+@router.get(
+    "/requests",
+    response_model=list[ServiceRequestRead],
+    dependencies=_waiter_staff,
+    summary="Open guest requests, oldest first",
+)
+async def open_requests(db: AsyncSession = Depends(get_db)):
+    rows = (
+        (
+            await db.execute(
+                select(ServiceRequest)
+                .where(ServiceRequest.status == RequestStatus.OPEN)
+                .order_by(ServiceRequest.created_at)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return rows
+
+
+@router.post(
+    "/requests/{request_id}/done",
+    response_model=ServiceRequestRead,
+    dependencies=_waiter_staff,
+    summary="Mark a guest request as handled",
+)
+async def resolve_request(request_id: str, db: AsyncSession = Depends(get_db)):
+    req = await db.get(ServiceRequest, request_id)
+    if not req:
+        raise HTTPException(status_code=404, detail="Request not found")
+    if req.status == RequestStatus.OPEN:
+        req.status = RequestStatus.DONE
+        req.resolved_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(req)
+        await ws_manager.broadcast({"event": "service_request_closed", "request_id": req.id, "table_id": req.table_id})
+    return req
+
+
+# ===================================================================
+# POST /waiter/tables/{table_id}/clear – guests left, start a fresh tab
+# ===================================================================
+@router.post(
+    "/tables/{table_id}/clear",
+    dependencies=_waiter_staff,
+    summary="Clear a table after guests leave: new tab on its tablet, open requests closed",
+)
+async def clear_table(table_id: str, db: AsyncSession = Depends(get_db)):
+    table = await db.get(Table, table_id)
+    if not table:
+        raise HTTPException(status_code=404, detail="Table not found")
+
+    unfinished = (
+        (
+            await db.execute(
+                select(Order)
+                .where(Order.table_id == table.id)
+                .where(Order.session_id == table.session_id)
+                .where(Order.status.in_([OrderStatus.PENDING, OrderStatus.PREPARING, OrderStatus.READY]))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if unfinished:
+        raise HTTPException(status_code=400, detail="Table still has orders that are not served")
+
+    now = datetime.now(timezone.utc)
+    open_reqs = (
+        (
+            await db.execute(
+                select(ServiceRequest)
+                .where(ServiceRequest.table_id == table.id)
+                .where(ServiceRequest.status == RequestStatus.OPEN)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    for r in open_reqs:
+        r.status = RequestStatus.DONE
+        r.resolved_at = now
+
+    table.session_id = new_session_id()
+    table.occupied = False
+    await db.commit()
+
+    await ws_manager.broadcast({"event": "table_cleared", "table_id": table.id, "table_number": table.number})
+    return {"table_id": table.id, "session_id": table.session_id}

@@ -62,7 +62,7 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     """Authenticate by email + password and return tokens."""
     result = await db.execute(select(User).where(User.email == body.email))
     user = result.scalar_one_or_none()
-    if not user or not verify_password(body.password, user.hashed_password):
+    if not user or not user.active or not verify_password(body.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid credentials")
     return _build_token_pair(user)
 
@@ -80,7 +80,7 @@ async def refresh(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
     user_id = payload.get("sub")
     result = await db.execute(select(User).where(User.id == user_id))
     user = result.scalar_one_or_none()
-    if user is None:
+    if user is None or not user.active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
     return _build_token_pair(user)

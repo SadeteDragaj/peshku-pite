@@ -1,81 +1,112 @@
-/* Single order card displayed in the KDS grid. */
+/* One kitchen ticket: table, age (colour shifts as it waits), items with sizes & notes, Fillo → Gati. */
 
-import type { Order, OrderStatus } from "./types";
+import { toMs } from "../../lib/time";
+import type { Order, OrderItem, OrderStatus, StationFilter } from "./types";
 
 interface Props {
   order: Order;
   onUpdateStatus: (orderId: string, status: OrderStatus) => void;
+  /** Show only kitchen or bar lines of the order */
+  station?: StationFilter;
+  /** Current time, passed in so all tickets tick together */
+  now?: number;
 }
 
-const STATUS_COLORS: Record<string, string> = {
-  pending: "border-yellow-400 bg-yellow-50",
-  preparing: "border-blue-400 bg-blue-50",
-  ready: "border-green-400 bg-green-50",
-  served: "border-gray-300 bg-gray-50",
-  voided: "border-red-300 bg-red-50",
-};
-
-function timeSince(iso: string) {
-  const diff = Math.floor((Date.now() - new Date(iso).getTime()) / 1000);
-  if (diff < 60) return `${diff}s`;
-  return `${Math.floor(diff / 60)}m`;
+/** 0–5 min teal, 5–10 amber, 10+ red. Bands differ in lightness too, not only hue. */
+export function ageBand(minutes: number) {
+  if (minutes >= 10) return { bg: "bg-brand-red", fg: "text-brand-paper" };
+  if (minutes >= 5) return { bg: "bg-brand-amber", fg: "text-brand-ink" };
+  return { bg: "bg-brand-teal", fg: "text-brand-paper" };
 }
 
-export default function OrderCard({ order, onUpdateStatus }: Props) {
-  const color = STATUS_COLORS[order.status] ?? "border-gray-200";
+export const visibleItems = (order: Order, station: StationFilter = "all"): OrderItem[] =>
+  station === "all" ? order.items : order.items.filter((i) => (i.station ?? "kitchen") === station);
+
+function mmss(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = total % 60;
+  return `${m < 10 ? "0" : ""}${m}:${s < 10 ? "0" : ""}${s}`;
+}
+
+const STATE_LABEL: Partial<Record<OrderStatus, string>> = { pending: "E re", preparing: "Në përgatitje", ready: "Gati" };
+
+export default function OrderCard({ order, onUpdateStatus, station = "all", now = Date.now() }: Props) {
+  const age = now - toMs(order.created_at);
+  const band = ageBand(age / 60000);
+  const items = visibleItems(order, station);
+  const table = order.table_number ?? order.table_id;
+  const hasOtherStation = items.length < order.items.length;
 
   return (
-    <div className={`rounded-lg border-2 p-4 shadow-sm ${color}`}>
-      {/* Header */}
-      <div className="flex items-center justify-between mb-2">
-        <span className="font-bold text-lg">Table {order.table_id}</span>
-        <span className="text-xs text-gray-500">{timeSince(order.created_at)} ago</span>
+    <article
+      aria-label={`Tavolina ${table}`}
+      className="flex flex-col overflow-hidden rounded-[22px] bg-brand-paper shadow-[0_2px_0_rgba(24,58,61,.08)]"
+    >
+      <div className={`flex items-center justify-between px-5 py-4 ${band.bg} ${band.fg}`}>
+        <div className="flex flex-col">
+          <span className="font-display text-[40px] font-extrabold leading-none">T{table}</span>
+          <span className="text-base font-bold opacity-90">#{order.id.slice(0, 4)}</span>
+        </div>
+        <div className="flex flex-col items-end">
+          <span className="font-display text-[34px] font-extrabold tabular-nums">{mmss(age)}</span>
+          <span className="text-[15px] font-bold opacity-90">{STATE_LABEL[order.status] ?? order.status}</span>
+        </div>
       </div>
 
-      {/* Status badge */}
-      <span className="inline-block mb-3 px-2 py-0.5 rounded text-xs font-semibold uppercase tracking-wide bg-white/60">
-        {order.status}
-      </span>
-
-      {/* Items */}
-      <ul className="space-y-1 text-sm mb-4">
-        {order.items.map((item) => (
-          <li key={item.id} className="flex justify-between">
-            <span>
-              <span className="font-medium">{item.quantity}×</span> {item.menu_item_id}
-            </span>
+      <ul className="flex flex-col gap-3 px-5 py-3.5">
+        {items.map((item) => (
+          <li key={item.id} className="flex flex-col gap-1">
+            <div className="flex items-baseline gap-2.5">
+              <span className="min-w-9 font-display text-[26px] font-extrabold">{item.quantity}×</span>
+              <span className="text-[21px] font-bold leading-tight">{item.name || item.menu_item_id}</span>
+            </div>
+            {(item.size || (item.addons?.length ?? 0) > 0) && (
+              <span className="ml-[46px] text-lg text-brand-muted">
+                {[item.size && `Madhësia ${item.size}`, ...(item.addons ?? []).map((a) => `+ ${a.name}`)]
+                  .filter(Boolean)
+                  .join(" · ")}
+              </span>
+            )}
             {item.special_instructions && (
-              <span className="ml-2 text-gray-400 italic truncate max-w-[140px]">
+              <span className="ml-[46px] self-start rounded-lg bg-brand-orange-tint px-2.5 py-1 text-lg font-extrabold uppercase text-[#8F4512]">
                 {item.special_instructions}
               </span>
             )}
           </li>
         ))}
+        {hasOtherStation && (
+          <li className="text-[15px] font-semibold text-brand-faint">
+            + {order.items.length - items.length} {station === "kitchen" ? "nga bari" : "nga kuzhina"}
+          </li>
+        )}
       </ul>
 
-      {order.notes && (
-        <p className="text-xs text-gray-500 italic mb-3">📝 {order.notes}</p>
-      )}
+      {order.notes && <p className="mx-5 mb-3 rounded-lg bg-brand-inset px-3 py-2 text-base font-semibold">{order.notes}</p>}
 
-      {/* Action buttons */}
-      <div className="flex gap-2">
+      <div className="mt-auto px-4 pb-4">
         {order.status === "pending" && (
           <button
             onClick={() => onUpdateStatus(order.id, "preparing")}
-            className="flex-1 py-1.5 rounded bg-blue-600 text-white text-sm font-medium hover:bg-blue-700"
+            className="h-[72px] w-full rounded-2xl bg-brand-chip text-2xl font-extrabold text-brand-ink active:scale-[0.99]"
           >
-            Mark Preparing
+            Fillo
           </button>
         )}
         {order.status === "preparing" && (
           <button
             onClick={() => onUpdateStatus(order.id, "ready")}
-            className="flex-1 py-1.5 rounded bg-green-600 text-white text-sm font-medium hover:bg-green-700"
+            className="h-[72px] w-full rounded-2xl bg-brand-ink text-2xl font-extrabold text-brand-paper active:scale-[0.99]"
           >
-            Mark Ready
+            Gati
           </button>
         )}
+        {order.status === "ready" && (
+          <div className="flex h-[72px] items-center justify-center rounded-2xl bg-brand-teal-tint text-xl font-bold text-brand-teal-deep">
+            Pret kamarierin
+          </div>
+        )}
       </div>
-    </div>
+    </article>
   );
 }

@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.api import auth, menu, orders, payments, tables, waiter, inventory, analytics, ws
+from app.api import auth, menu, orders, payments, tables, waiter, inventory, analytics, ws, guest, manager
 from app.core.config import settings
 from app.db.session import engine
 from app.db.base import Base
@@ -26,6 +26,8 @@ OPENAPI_TAGS = [
     {"name": "inventory", "description": "Inventory items, stock transactions, ingredient linkage"},
     {"name": "analytics", "description": "Sales analytics, daily summaries, top items"},
     {"name": "tables", "description": "Restaurant table management"},
+    {"name": "manager", "description": "Manager board: daily sales, staff, table assignment, reviews"},
+    {"name": "guest", "description": "Table tablet: menu, orders, tab, service requests, feedback"},
     {"name": "websocket", "description": "Real-time order event stream"},
 ]
 
@@ -63,6 +65,8 @@ app.include_router(waiter.router, prefix="/api/waiter", tags=["waiter"])
 app.include_router(inventory.router, prefix="/api/inventory", tags=["inventory"])
 app.include_router(analytics.router, prefix="/api/analytics", tags=["analytics"])
 app.include_router(tables.router, prefix="/api/tables", tags=["tables"])
+app.include_router(guest.router, prefix="/api/guest", tags=["guest"])
+app.include_router(manager.router, prefix="/api/manager", tags=["manager"])
 
 # WebSocket
 app.include_router(ws.router, prefix="/ws", tags=["websocket"])

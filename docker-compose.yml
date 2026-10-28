@@ -7,13 +7,14 @@ services:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: ordering
-    ports: ["5432:5432"]
     volumes: [pgdata:/var/lib/postgresql/data]
 
   backend:
     build: ./backend
     ports: ["8000:8000"]
     env_file: ./backend/.env.example
+    environment:
+      DEMO_MODE: "true"  # landing page opens table menus directly – remove for real use
     depends_on: [db]
     volumes: ["./backend:/app"]
 

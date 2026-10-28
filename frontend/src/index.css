@@ -1,3 +1,38 @@
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-brand-cream font-sans text-brand-ink antialiased;
+    /* iPhone landscape: keep content clear of the notch (viewport-fit=cover) */
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}
+
+@layer components {
+  /* Touch-first kiosk surface: no text selection, no grey tap flash, no rubber-band */
+  .kiosk {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    touch-action: manipulation;
+  }
+  .kiosk input,
+  .kiosk textarea {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+
+  /* Placeholder for dishes without a photo yet */
+  .photo-stripes {
+    background-image: repeating-linear-gradient(135deg, rgba(24, 58, 61, 0.06) 0 2px, transparent 2px 16px);
+  }
+
+  .scroll-thin {
+    scrollbar-width: thin;
+    scrollbar-color: #d3c6a8 transparent;
+  }
+}

@@ -11,6 +11,12 @@ class Settings(BaseSettings):
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     CORS_ORIGINS: list[str] = ["http://localhost:5173"]
+    # Business day boundaries for the manager's "today" figures
+    RESTAURANT_TZ: str = "Europe/Tirane"
+
+    # Demo only: lets the landing page open any table's menu without the tablet link.
+    # Never enable in production – it hands out every table's device key.
+    DEMO_MODE: bool = False
 
     # Stripe
     STRIPE_SECRET_KEY: str = ""

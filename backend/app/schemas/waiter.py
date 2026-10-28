@@ -14,10 +14,16 @@ class TableOverview(BaseModel):
     seats: int
     occupied: bool
     assigned_waiter_id: str | None = None
+    assigned_waiter_name: str = ""
     active_orders: list[OrderRead] = []
     total_pending: float = 0.0
 
     model_config = {"from_attributes": True}
+
+
+class WaiterBrief(BaseModel):
+    id: str
+    name: str
 
 
 # ---------------------------------------------------------------------------

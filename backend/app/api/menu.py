@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.ws import manager as ws_manager
 from app.core.deps import RoleChecker, get_db
 from app.core.security import Role
 from app.models.menu import MenuCategory, MenuItem
@@ -201,6 +202,8 @@ async def update_item(
         setattr(item, field, value)
     await db.commit()
     await db.refresh(item)
+    # Tablets refresh their menu (sold out, price, photo) as soon as this arrives
+    await ws_manager.broadcast({"event": "menu_changed", "item_id": item.id})
     return item
 
 
